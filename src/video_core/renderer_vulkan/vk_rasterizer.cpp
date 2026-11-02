@@ -378,6 +378,9 @@ namespace {
 void TraceWindowTarget(const Tegra::Engines::Maxwell3D& maxwell3d, Tegra::MemoryManager& memory,
                        const char* kind, u32 count) {
     static const bool trace = std::getenv("EDEN_NX2_WINDOW_TRACE") != nullptr;
+    if (!trace) {
+        return;
+    }
     static u32 traced{};
     const auto& regs = maxwell3d.regs;
     static const u64 skip = [] {

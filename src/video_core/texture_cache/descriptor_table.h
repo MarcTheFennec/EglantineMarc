@@ -13,6 +13,7 @@
 #include "common/common_types.h"
 #include "common/div_ceil.h"
 #include "common/assert.h"
+#include "common/slot_vector.h"
 #include "video_core/memory_manager.h"
 #include "video_core/rasterizer_interface.h"
 
@@ -69,10 +70,14 @@ public:
         invalidated = false;
         //
         descriptors.resize(num_descriptors);
+        ids.resize(num_descriptors);
     }
 
     std::vector<u64> read_descriptors;
     std::vector<T> descriptors;
+    /// What the texture cache resolved each descriptor to; valid where Read last reported it as
+    /// not new.
+    std::vector<Common::SlotId> ids;
     GPUVAddr current_gpu_addr{};
     u32 current_limit{};
     bool invalidated{}; ///< read_descriptors is to be cleared before the next read
