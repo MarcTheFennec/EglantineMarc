@@ -583,14 +583,13 @@ SamplerId TextureCache<P>::GetSamplerId(u32 index, bool compute) {
         LOG_TRACE(HW_GPU, "Invalid sampler index={}", index);
         return NULL_SAMPLER_ID;
     }
-    auto const map_index = index | (compute ? Common::SlotId::TAGGED_VALUE : 0);
     auto const [descriptor, is_new] = table.Read(*gpu_memory, index);
     if (is_new) {
         auto const id = FindSampler(descriptor, compute);
-        channel_state->sampler_ids.insert_or_assign(map_index, id);
+        table.ids[index] = id;
         return id;
     }
-    return channel_state->sampler_ids.find(map_index)->second;
+    return table.ids[index];
 }
 
 template <class P>
@@ -815,7 +814,6 @@ ImageViewId TextureCache<P>::VisitImageView(u32 index, bool compute) {
         LOG_TRACE(HW_GPU, "Invalid image view index={}", index);
         return NULL_IMAGE_VIEW_ID;
     }
-    auto const map_index = index | (compute ? Common::SlotId::TAGGED_VALUE : 0);
     // Is new (on the tegra engine side)?
     auto const [descriptor, is_new] = table.Read(*gpu_memory, index);
     if (is_new) {
@@ -830,16 +828,16 @@ ImageViewId TextureCache<P>::VisitImageView(u32 index, bool compute) {
                 }
             }
             PrepareImageView(pair->second, false, false);
-            channel_state->image_view_ids.insert_or_assign(map_index, pair->second);
+            table.ids[index] = pair->second;
             return pair->second;
         }
-        channel_state->image_view_ids.insert_or_assign(map_index, NULL_IMAGE_VIEW_ID);
+        table.ids[index] = NULL_IMAGE_VIEW_ID;
         return NULL_IMAGE_VIEW_ID;
     }
-    auto const it = channel_state->image_view_ids.find(map_index);
-    if (it->second != NULL_IMAGE_VIEW_ID)
-        PrepareImageView(it->second, false, false);
-    return it->second;
+    const ImageViewId id = table.ids[index];
+    if (id != NULL_IMAGE_VIEW_ID)
+        PrepareImageView(id, false, false);
+    return id;
 }
 
 template <class P>
@@ -2066,9 +2064,10 @@ void TextureCache<P>::InvalidateScale(Image& image) {
         // A walk over every entry (title 1: ~5,400 in 5 channels) for each deleted image: debug
         // builds only. The tables are invalidated below, so each entry is written again before
         // it is read.
-        if constexpr (ENABLE_VALIDATION)
-            for (auto& e : channel_info.image_view_ids)
-                e.second = CORRUPT_ID;
+        if constexpr (ENABLE_VALIDATION) {
+            std::ranges::fill(channel_info.graphics_image_table.ids, CORRUPT_ID);
+            std::ranges::fill(channel_info.compute_image_table.ids, CORRUPT_ID);
+        }
 #endif
         channel_info.graphics_image_table.Invalidate();
         channel_info.compute_image_table.Invalidate();
@@ -3275,9 +3274,10 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
         // A walk over every entry (title 1: ~5,400 in 5 channels) for each deleted image: debug
         // builds only. The tables are invalidated below, so each entry is written again before
         // it is read.
-        if constexpr (ENABLE_VALIDATION)
-            for (auto& e : channel_info.image_view_ids)
-                e.second = CORRUPT_ID;
+        if constexpr (ENABLE_VALIDATION) {
+            std::ranges::fill(channel_info.graphics_image_table.ids, CORRUPT_ID);
+            std::ranges::fill(channel_info.compute_image_table.ids, CORRUPT_ID);
+        }
 #endif
         channel_info.graphics_image_table.Invalidate();
         channel_info.compute_image_table.Invalidate();
