@@ -209,9 +209,10 @@ bool Swapchain::AcquireNextImage(bool may_flush) {
     wait_with_frame_pacing();
 #endif
 
-    resource_ticks[image_index] = scheduler.CurrentTick();
+    const u64 current_tick = scheduler.CurrentTick();
+    resource_ticks[image_index] = current_tick > 0 ? current_tick - 1 : 0;
 
-    return is_suboptimal || is_outdated;
+    return is_outdated;
 }
 
 void Swapchain::Present(VkSemaphore render_semaphore) {

@@ -151,7 +151,26 @@ bool DmaPusher::Step() {
                 CheckSubmitHash(header, command_list.submit_hashes[dma_pushbuffer_subindex]);
             }
         }
-        // A resumed entry is read again: the words after the acquire may be new by now.
+        // Refresh the remaining submitted_words snapshot after a semaphore suspension resumes so
+        // commands written before the semaphore release are captured before a later frame can
+        // overwrite the CPU ring buffer (otherwise a stutter lets the next frame overwrite the
+        // render target at the end of this frame, leaving a 3-frame-old image in this frame's slot).
+        const u64 current_suspensions = suspensions.load(std::memory_order_acquire);
+        if (command_list.snapshot_suspensions != current_suspensions &&
+            (current_suspensions & 1) == 0 &&
+            dma_pushbuffer_subindex < command_list.submitted_offsets.size()) {
+            for (size_t i = dma_pushbuffer_subindex;
+                 i < command_list_size && i < command_list.submitted_offsets.size(); ++i) {
+                const auto& entry = command_list.command_lists[i];
+                if (entry.size != 0) {
+                    memory_manager.ReadBlockUnsafe(
+                        entry.addr,
+                        command_list.submitted_words.data() + command_list.submitted_offsets[i],
+                        size_t{entry.size} * sizeof(u32));
+                }
+            }
+            command_list.snapshot_suspensions = current_suspensions;
+        }
         // A safe read flushes the caches, which belong to the split's back thread while it runs
         // (the split only starts with unsafe reads; the settings can change mid-game).
         const bool use_safe = !VideoCommon::GpuSplit::Get().Active() &&
@@ -167,15 +186,13 @@ bool DmaPusher::Step() {
             gpu_written =
                 IsGpuWrittenCommands(dma_state.dma_get, size_t{header.size} * sizeof(u32));
         }
-        // The words as submitted, unless this is a resumed entry or the GPU has newer ones the
-        // safe read below would flush (with the split, the front can't tell: it reads memory
-        // unflushed anyway). Entries on pages the GPU writes (culling) always take the flushing
-        // read: their words at submit time are an older frame's.
-        const bool submitted = command_resume_offset == 0 &&
-                               dma_pushbuffer_subindex < command_list.submitted_offsets.size() &&
+        // The words as submitted, unless the GPU has newer ones the safe read below would flush
+        // (with the split, the front can't tell: it reads memory unflushed anyway). Entries on
+        // pages the GPU writes (culling) always take the flushing read: their words at submit time
+        // are an older frame's.
+        const bool submitted = dma_pushbuffer_subindex < command_list.submitted_offsets.size() &&
                                (command_list.snapshot_suspensions & 1) == 0 &&
-                               command_list.snapshot_suspensions ==
-                                   suspensions.load(std::memory_order_acquire) &&
+                               command_list.snapshot_suspensions == current_suspensions &&
                                !gpu_written &&
                                !(use_safe && memory_manager.IsMemoryDirty(dma_state.dma_get,
                                                                           header.size * sizeof(u32)));
@@ -185,7 +202,8 @@ bool DmaPusher::Step() {
                     command_list.submitted_offsets[dma_pushbuffer_subindex],
                 header.size};
             RecordParsedEntry(header, commands);
-            command_resume_offset += ProcessCommands(commands, 0);
+            command_resume_offset +=
+                ProcessCommands(commands.subspan(command_resume_offset), command_resume_offset);
         } else if (use_safe) {
             Tegra::Memory::GpuGuestMemory<Tegra::CommandHeader, Tegra::Memory::GuestMemoryFlags::SafeRead>headers(memory_manager, dma_state.dma_get, header.size, &command_headers);
             const std::span<const CommandHeader> commands{headers.data(), headers.size()};

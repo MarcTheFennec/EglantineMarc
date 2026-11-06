@@ -1740,6 +1740,11 @@ private:
             return value == nullptr ? -1 : value[0] == '1' ? 1 : 0;
         }();
         const auto entered = std::chrono::steady_clock::now();
+        // Ensure any earlier present that used this same swapchain image has already finished on
+        // the GPU before the game can acquire and overwrite it again.
+        if (const auto it = m_image_fences.find(w[5]); it != m_image_fences.end()) {
+            WaitForFrame(it->second.first, it->second.second);
+        }
         if (frames_ahead == 1 || (frames_ahead == -1 && !WaitForFrame(~w[22], w[24], true))) {
             LOG_DEBUG(Service, "nx2:vi2 present #{} fence ({}, {:#x}), waiting for ({}, {:#x}); now {:#x}",
                       m_presents, ~w[22], w[24], m_previous_fence_id, m_previous_fence_value,
@@ -1763,6 +1768,7 @@ private:
         }
         m_previous_fence_id = ~w[22];
         m_previous_fence_value = w[24];
+        m_image_fences[w[5]] = {~w[22], w[24]};
         const auto waited = std::chrono::steady_clock::now();
         Composite(w[5], ~w[22], w[24], w[7]);
         const auto composited = std::chrono::steady_clock::now();
@@ -1817,6 +1823,7 @@ private:
     } m_stats{};
     u32 m_previous_fence_id{~0U}; // none yet (WaitForFrame ignores ids >= 192)
     u32 m_previous_fence_value{};
+    std::map<u32, std::pair<u32, u32>> m_image_fences;
 
     // The console flips one frame per 60 Hz vblank and keeps the rest queued, so a game can't
     // present faster than that. Every slot is reported free here: hold each present until the
